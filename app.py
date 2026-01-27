@@ -6,6 +6,7 @@ from lark_oapi.api.drive.v1 import *
 import json
 import re
 import os
+processed_messages = set()
 
 app = Flask(__name__)
 
@@ -26,7 +27,7 @@ STATUS_VALUE = "验收通过"
 # 项目配置（新增项目在这里添加）
 PROJECTS = [
     {
-        "name": "项目1",
+        "name": "JigArt",
         "app_token": "Q8BWbvdpja9RzEsFXbjcXEy3nof",
         "table_id": "tbluv9XFW2P6B7sn"
     },
@@ -285,25 +286,45 @@ def index():
 def webhook():
     """接收飞书事件回调"""
     data = request.json
-    print(f"收到请求: {json.dumps(data, ensure_ascii=False)[:200]}")
     
     # URL 验证（飞书首次配置时会发送）
     if "challenge" in data:
-        print("URL验证请求")
         return {"challenge": data["challenge"]}
     
-    # 处理事件
+    # 快速返回响应，避免飞书重试
+    # 处理逻辑放在返回之前但要快速
+    
     try:
         header = data.get("header", {})
         event = data.get("event", {})
         
         event_type = header.get("event_type")
-        print(f"事件类型: {event_type}")
-        
         if event_type != "im.message.receive_v1":
             return {"code": 0}
         
         message = event.get("message", {})
+        message_id = message.get("message_id", "")
+        
+        # 消息去重
+        if message_id in processed_messages:
+            print(f"消息已处理，跳过: {message_id}")
+            return {"code": 0}
+        
+        # 过滤机器人自己发的消息
+        sender = event.get("sender", {})
+        sender_type = sender.get("sender_type", "")
+        if sender_type == "app":
+            print("跳过机器人自己的消息")
+            return {"code": 0}
+        
+        # 记录已处理的消息
+        processed_messages.add(message_id)
+        
+        # 限制集合大小，防止内存溢出
+        if len(processed_messages) > 1000:
+            processed_messages.clear()
+        
+        # 处理验收消息
         handle_acceptance(message)
             
     except Exception as e:
