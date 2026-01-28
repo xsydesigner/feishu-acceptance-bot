@@ -40,7 +40,7 @@ PROJECTS = [
         "name": "BusJam",
         "app_token": "OkR6bHCAfa3JrMst4fpcHd2SnHc",
         "table_id": "tblA0oTFNEI9O2wm",
-        "chat_ids": ["oc_d887d73c344ed7fc288ea487a73af247"]  # BusJam 项目群ID
+        "chat_ids": ["oc_d887d73c344ed7fc288ea487a73af247", "oc_c837780ca61da27e17d98d55bca4c83f"]  # BusJam 项目群ID
     },
     {
         "name": "GoodsSort",
