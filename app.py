@@ -36,6 +36,11 @@ PROJECTS = [
         "app_token": "OkR6bHCAfa3JrMst4fpcHd2SnHc",
         "table_id": "tblA0oTFNEI9O2wm"
     },
+    {
+        "name": "GoodsSort",
+        "app_token": "LadVwJ44SiCcMckp3k2cPKgcnTf",
+        "table_id": "tblCCU7igaomNzNd"
+    },
     # 新增项目模板：
     # {
     #     "name": "新项目名称",
