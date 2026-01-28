@@ -41,6 +41,11 @@ PROJECTS = [
         "app_token": "GGsDbt9LzaGkenspLklc3DD2nad",
         "table_id": "tblCCU7igaomNzNd"
     },
+    {
+        "name": "Solitaire",
+        "app_token": "NGyJbcjFmajwpvs5DEUcRKPnnI2",
+        "table_id": "tblLXAWBgrwKBbrK"
+    },
     # 新增项目模板：
     # {
     #     "name": "新项目名称",
