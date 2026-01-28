@@ -25,32 +25,38 @@ FIELD_ATTACHMENT = "验收附件"
 STATUS_VALUE = "验收通过"
 
 # 项目配置（新增项目在这里添加）
+# 🆕 添加 chat_ids 字段，关联项目群
 PROJECTS = [
     {
         "name": "JigArt",
         "app_token": "Q8BWbvdpja9RzEsFXbjcXEy3nof",
-        "table_id": "tbluv9XFW2P6B7sn"
+        "table_id": "tbluv9XFW2P6B7sn",
+        "chat_ids": ["oc_2575222eccd3a75f35d409eaba35ba66"]  # JigArt 项目群ID
     },
     {
         "name": "BusJam",
         "app_token": "OkR6bHCAfa3JrMst4fpcHd2SnHc",
-        "table_id": "tblA0oTFNEI9O2wm"
+        "table_id": "tblA0oTFNEI9O2wm",
+        "chat_ids": ["oc_d887d73c344ed7fc288ea487a73af247"]  # BusJam 项目群ID
     },
     {
         "name": "GoodsSort",
         "app_token": "GGsDbt9LzaGkenspLklc3DD2nad",
-        "table_id": "tblCCU7igaomNzNd"
+        "table_id": "tblCCU7igaomNzNd",
+        "chat_ids": ["oc_edb1f2904d837aa76057e56cb1776fe3"]  # GoodsSort 项目群ID
     },
     {
         "name": "Solitaire",
         "app_token": "NGyJbcjFmajwpvs5DEUcRKPnnI2",
-        "table_id": "tblLXAWBgrwKBbrK"
+        "table_id": "tblLXAWBgrwKBbrK",
+        "chat_ids": ["oc_b4a3a8b721c092b94bef343ac9918060"]  # GoodsSort 项目群ID
     },
     # 新增项目模板：
     # {
     #     "name": "新项目名称",
     #     "app_token": "从URL的base/后面复制",
-    #     "table_id": "从URL的table=后面复制"
+    #     "table_id": "从URL的table=后面复制",
+    #     "chat_ids": ["oc_群ID"]  # 可以配置多个群
     # },
 ]
 
@@ -68,6 +74,20 @@ def get_client():
 # 业务函数
 # ============================================================
 
+def find_project_by_chat_id(chat_id):
+    """🆕 根据群ID查找对应的项目"""
+    for project in PROJECTS:
+        if chat_id in project.get("chat_ids", []):
+            return project
+    return None
+
+def find_project_by_name(project_name):
+    """🆕 根据项目名查找项目"""
+    for project in PROJECTS:
+        if project["name"].lower() == project_name.lower():
+            return project
+    return None
+
 def find_record_in_all_projects(requirement_name):
     """遍历所有项目查找需求"""
     for project in PROJECTS:
@@ -75,6 +95,15 @@ def find_record_in_all_projects(requirement_name):
         if record:
             return project, record
     return None, None
+
+def find_record_in_all_projects_v2(requirement_name):
+    """🆕 遍历所有项目查找需求，返回所有匹配"""
+    matches = []
+    for project in PROJECTS:
+        record = find_record(project, requirement_name)
+        if record:
+            matches.append({"project": project, "record": record})
+    return matches
 
 def find_record(project, requirement_name):
     """在指定项目中查找需求"""
@@ -234,8 +263,8 @@ def reply_message(message_id, text):
     
     client.im.v1.message.reply(request_body)
 
-def handle_acceptance(message):
-    """处理验收消息"""
+def handle_acceptance(message, chat_id):
+    """🆕 处理验收消息（增加 chat_id 参数）"""
     content = json.loads(message.get("content", "{}"))
     text = content.get("text", "")
     message_id = message.get("message_id")
@@ -243,21 +272,79 @@ def handle_acceptance(message):
     
     print(f"\n{'='*50}")
     print(f"收到消息: {text}")
+    print(f"来自群聊: {chat_id}")
     
     # 匹配【验收通过】
     match = re.search(r"【验收通过】(.+)", text)
     if not match:
         return
     
-    requirement_name = match.group(1).strip()
+    full_text = match.group(1).strip()
     # 去除可能的@机器人文本
-    requirement_name = re.sub(r"@\S+\s*", "", requirement_name).strip()
+    full_text = re.sub(r"@\S+\s*", "", full_text).strip()
+    
+    # 🆕 解析项目名和需求内容
+    specified_project_name = None
+    requirement_name = full_text
+    
+    if "/" in full_text:
+        parts = full_text.split("/", 1)
+        specified_project_name = parts[0].strip()
+        requirement_name = parts[1].strip()
+    
+    print(f"指定项目: {specified_project_name or '未指定'}")
     print(f"需求内容: {requirement_name}")
     
-    # 查找需求
-    project, record = find_record_in_all_projects(requirement_name)
+    # 🆕 确定项目的优先级：
+    # 1. 如果消息中指定了项目名，使用指定的项目
+    # 2. 否则根据群ID自动匹配项目
+    # 3. 如果群ID也没匹配到，搜索所有项目
+    
+    project = None
+    record = None
+    
+    if specified_project_name:
+        # 方式1：使用消息中指定的项目名
+        project = find_project_by_name(specified_project_name)
+        if not project:
+            project_names = ', '.join([p['name'] for p in PROJECTS])
+            reply_message(message_id, f"❌ 未找到项目「{specified_project_name}」\n可用项目: {project_names}")
+            return
+        record = find_record(project, requirement_name)
+        print(f"📌 使用指定项目: {project['name']}")
+        
+    else:
+        # 方式2：根据群ID自动匹配
+        project = find_project_by_chat_id(chat_id)
+        
+        if project:
+            # 找到了对应的项目群
+            record = find_record(project, requirement_name)
+            print(f"📌 根据群ID自动匹配到项目: {project['name']}")
+        else:
+            # 方式3：未配置群ID，搜索所有项目
+            print(f"⚠️ 群 {chat_id} 未关联项目，搜索所有项目...")
+            matches = find_record_in_all_projects_v2(requirement_name)
+            
+            if len(matches) == 0:
+                reply_message(message_id, f"❌ 未找到需求「{requirement_name}」")
+                return
+            elif len(matches) > 1:
+                # 找到多个匹配，提示用户
+                project_list = "\n".join([f"  • {m['project']['name']}" for m in matches])
+                reply_message(message_id, 
+                    f"⚠️ 找到 {len(matches)} 个同名需求：\n{project_list}\n\n"
+                    f"请使用格式：【验收通过】项目名/{requirement_name}\n"
+                    f"或联系管理员配置群ID关联")
+                return
+            else:
+                project = matches[0]["project"]
+                record = matches[0]["record"]
+                print(f"📌 全局搜索找到唯一匹配: {project['name']}")
+    
+    # 检查是否找到需求
     if not record:
-        reply_message(message_id, f"❌ 未找到需求「{requirement_name}」")
+        reply_message(message_id, f"❌ 在「{project['name']}」中未找到需求「{requirement_name}」")
         print(f"❌ 未找到需求")
         return
     
@@ -273,7 +360,7 @@ def handle_acceptance(message):
     # 更新记录
     if update_record(project, record.record_id, attachments):
         attachment_info = f"\n📎 已同步 {len(attachments)} 个附件" if attachments else ""
-        reply_message(message_id, f"✅ 需求「{requirement_name}」验收通过{attachment_info}")
+        reply_message(message_id, f"✅ 「{project['name']}」需求「{requirement_name}」验收通过{attachment_info}")
         print(f"✅ 更新成功")
     else:
         reply_message(message_id, f"❌ 更新失败，请重试")
@@ -289,7 +376,7 @@ def index():
     return {
         "status": "running",
         "message": "🤖 需求验收机器人运行中",
-        "projects": [p["name"] for p in PROJECTS]
+        "projects": [{"name": p["name"], "chat_ids": p.get("chat_ids", [])} for p in PROJECTS]
     }
 
 @app.route("/webhook", methods=["POST"])
@@ -301,9 +388,6 @@ def webhook():
     if "challenge" in data:
         return {"challenge": data["challenge"]}
     
-    # 快速返回响应，避免飞书重试
-    # 处理逻辑放在返回之前但要快速
-    
     try:
         header = data.get("header", {})
         event = data.get("event", {})
@@ -314,6 +398,7 @@ def webhook():
         
         message = event.get("message", {})
         message_id = message.get("message_id", "")
+        chat_id = message.get("chat_id", "")  # 🆕 获取群ID
         
         # 消息去重
         if message_id in processed_messages:
@@ -334,8 +419,8 @@ def webhook():
         if len(processed_messages) > 1000:
             processed_messages.clear()
         
-        # 处理验收消息
-        handle_acceptance(message)
+        # 🆕 处理验收消息（传入 chat_id）
+        handle_acceptance(message, chat_id)
             
     except Exception as e:
         print(f"处理出错: {e}")
@@ -355,7 +440,8 @@ if __name__ == "__main__":
     print(f"APP_ID: {APP_ID[:10]}..." if APP_ID else "APP_ID: 未配置")
     print(f"已配置 {len(PROJECTS)} 个项目:")
     for p in PROJECTS:
-        print(f"  - {p['name']}")
+        chat_ids = p.get("chat_ids", [])
+        print(f"  - {p['name']} (关联 {len(chat_ids)} 个群)")
     print("=" * 50)
     
     port = int(os.environ.get("PORT", 3000))
