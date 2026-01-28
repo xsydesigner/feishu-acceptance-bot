@@ -116,7 +116,7 @@ def find_record(project, requirement_name):
                 .conjunction("and")
                 .conditions([Condition.builder()
                     .field_name(FIELD_REQUIREMENT)
-                    .operator("contains")
+                    .operator("is")
                     .value([requirement_name])
                     .build()])
                 .build())
