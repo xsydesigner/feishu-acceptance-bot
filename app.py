@@ -23,9 +23,10 @@ APP_SECRET = os.environ.get("APP_SECRET", "")
 FIELD_REQUIREMENT = "需求内容"
 FIELD_STATUS = "验收状态"
 FIELD_ATTACHMENT = "验收附件"
-FIELD_DEV_STATUS = "开发状态"  # 🆕 新增
+FIELD_DEV_STATUS = "开发状态"
+FIELD_DOC_LINK = "验收文档"  # 🆕 新增
 STATUS_VALUE = "验收通过"
-DEV_STATUS_VALUE = "已完成"  # 🆕 新增
+DEV_STATUS_VALUE = "已完成"
 
 # 项目配置（新增项目在这里添加）
 # 🆕 添加 chat_ids 字段，关联项目群
@@ -52,7 +53,7 @@ PROJECTS = [
         "name": "Solitaire",
         "app_token": "NGyJbcjFmajwpvs5DEUcRKPnnI2",
         "table_id": "tblLXAWBgrwKBbrK",
-        "chat_ids": ["oc_b4a3a8b721c092b94bef343ac9918060"]  # GoodsSort 项目群ID
+        "chat_ids": ["oc_b4a3a8b721c092b94bef343ac9918060"]  # Solitaire 项目群ID
     },
     # 新增项目模板：
     # {
@@ -140,15 +141,20 @@ def find_record(project, requirement_name):
         return response.data.items[0]
     return None
 
-def update_record(project, record_id, attachments=None):
-    """更新验收状态、开发状态和附件"""
+def update_record(project, record_id, attachments=None, doc_links=None):
+    """更新验收状态、开发状态、附件和文档链接"""
     client = get_client()
     fields = {
         FIELD_STATUS: STATUS_VALUE,
-        FIELD_DEV_STATUS: DEV_STATUS_VALUE  # 🆕 新增：开发状态改为已完成
+        FIELD_DEV_STATUS: DEV_STATUS_VALUE
     }
     if attachments:
         fields[FIELD_ATTACHMENT] = attachments
+    
+    # 🆕 添加文档链接
+    if doc_links and len(doc_links) > 0:
+        # 超链接字段格式
+        fields[FIELD_DOC_LINK] = doc_links[0]
     
     request_body = UpdateAppTableRecordRequest.builder() \
         .app_token(project["app_token"]) \
@@ -246,6 +252,19 @@ def extract_attachments(project, parent_message):
                     attachments.append({"file_token": file_token})
                     print(f"  ✅ 视频上传成功")
     
+    # 文件（PDF/Word/Excel等）
+    elif msg_type == "file":
+        file_key = content.get("file_key")
+        file_name = content.get("file_name", f"{file_key}.file")
+        if file_key:
+            print(f"  下载文件: {file_name}")
+            file_content = download_resource(message_id, file_key, "file")
+            if file_content:
+                file_token = upload_to_bitable(project, file_content, file_name)
+                if file_token:
+                    attachments.append({"file_token": file_token})
+                    print(f"  ✅ 文件上传成功")
+    
     # 富文本消息（可能包含多张图片）
     elif msg_type == "post":
         post_content = content.get("content", [])
@@ -264,6 +283,86 @@ def extract_attachments(project, parent_message):
     
     return attachments
 
+def extract_links(parent_message):
+    """🆕 提取引用消息中的链接"""
+    links = []
+    if not parent_message:
+        return links
+    
+    msg_type = parent_message.msg_type
+    content = json.loads(parent_message.body.content)
+    
+    print(f"  提取链接，消息类型: {msg_type}")
+    
+    # 纯文本消息 - 提取URL
+    if msg_type == "text":
+        text = content.get("text", "")
+        # 匹配各种链接
+        urls = re.findall(r'https?://[^\s<>"{}|\\^`\[\]]+', text)
+        for url in urls:
+            links.append({"text": "链接", "link": url})
+            print(f"  ✅ 提取到链接: {url}")
+    
+    # 富文本消息 - 提取链接元素
+    elif msg_type == "post":
+        post_content = content.get("content", [])
+        for line in post_content:
+            for element in line:
+                # 链接元素
+                if element.get("tag") == "a":
+                    url = element.get("href", "")
+                    text = element.get("text", "链接")
+                    if url:
+                        links.append({"text": text, "link": url})
+                        print(f"  ✅ 提取到链接: {text} -> {url}")
+                # 文本中可能包含的链接
+                elif element.get("tag") == "text":
+                    text = element.get("text", "")
+                    urls = re.findall(r'https?://[^\s<>"{}|\\^`\[\]]+', text)
+                    for url in urls:
+                        links.append({"text": "链接", "link": url})
+                        print(f"  ✅ 提取到链接: {url}")
+    
+    # 交互卡片消息（文档分享卡片）
+    elif msg_type == "interactive":
+        card_str = json.dumps(content)
+        urls = re.findall(r'https?://[^\s<>"{}|\\^`\[\]\\]+', card_str)
+        for url in urls:
+            # 清理URL末尾可能的转义字符
+            url = url.rstrip('\\/')
+            if "feishu.cn" in url or "larksuite.com" in url:
+                links.append({"text": "文档链接", "link": url})
+                print(f"  ✅ 提取到卡片链接: {url}")
+    
+    # 分享卡片消息
+    elif msg_type == "share_card":
+        card_str = json.dumps(content)
+        urls = re.findall(r'https?://[^\s<>"{}|\\^`\[\]\\]+', card_str)
+        for url in urls:
+            url = url.rstrip('\\/')
+            links.append({"text": "分享链接", "link": url})
+            print(f"  ✅ 提取到分享链接: {url}")
+    
+    # 其他消息类型 - 尝试从整个content中提取
+    else:
+        content_str = json.dumps(content)
+        urls = re.findall(r'https?://[^\s<>"{}|\\^`\[\]\\]+', content_str)
+        for url in urls:
+            url = url.rstrip('\\/')
+            if "feishu.cn" in url or "larksuite.com" in url or "docs" in url:
+                links.append({"text": "链接", "link": url})
+                print(f"  ✅ 提取到链接: {url}")
+    
+    # 去重
+    seen = set()
+    unique_links = []
+    for link in links:
+        if link["link"] not in seen:
+            seen.add(link["link"])
+            unique_links.append(link)
+    
+    return unique_links
+
 def reply_message(message_id, text):
     """回复消息"""
     client = get_client()
@@ -279,7 +378,7 @@ def reply_message(message_id, text):
     client.im.v1.message.reply(request_body)
 
 def handle_acceptance(message, chat_id):
-    """处理验收消息（支持多条需求，每条都上传附件）"""
+    """处理验收消息（支持多条需求，每条都上传附件和链接）"""
     content = json.loads(message.get("content", "{}"))
     text = content.get("text", "")
     message_id = message.get("message_id")
@@ -297,7 +396,7 @@ def handle_acceptance(message, chat_id):
     full_text = match.group(1).strip()
     full_text = re.sub(r"@\S+\s*", "", full_text).strip()
     
-    # 🆕 解析项目名和需求内容（先检查是否以项目名开头）
+    # 解析项目名和需求内容（先检查是否以项目名开头）
     specified_project_name = None
     requirements_text = full_text
     
@@ -333,16 +432,22 @@ def handle_acceptance(message, chat_id):
     else:
         base_project = find_project_by_chat_id(chat_id)
     
-    # 🆕 获取引用消息（如果有的话）
+    # 获取引用消息（如果有的话）
     parent_message = None
     if parent_id:
-        print(f"检测到引用消息，获取附件信息...")
+        print(f"检测到引用消息，获取附件和链接...")
         parent_message = get_parent_message(parent_id)
+    
+    # 🆕 提取链接（只需提取一次，所有需求共用）
+    doc_links = []
+    if parent_message:
+        doc_links = extract_links(parent_message)
     
     # 批量处理每条需求
     success_list = []
     fail_list = []
     total_attachments = 0
+    has_links = len(doc_links) > 0
     
     for idx, requirement_name in enumerate(requirement_names):
         print(f"\n处理需求 [{idx+1}/{len(requirement_names)}]: {requirement_name}")
@@ -369,15 +474,15 @@ def handle_acceptance(message, chat_id):
         
         print(f"✅ 在「{project['name']}」中找到需求")
         
-        # 🆕 为每条需求单独上传附件
+        # 为每条需求单独上传附件
         attachments = []
         if parent_message:
             print(f"  为该需求上传附件...")
             attachments = extract_attachments(project, parent_message)
             total_attachments += len(attachments)
         
-        # 更新记录（每条需求都带附件）
-        if update_record(project, record.record_id, attachments):
+        # 🆕 更新记录（附件 + 链接）
+        if update_record(project, record.record_id, attachments, doc_links):
             success_list.append(f"{project['name']}/{requirement_name}")
             print(f"✅ 更新成功")
         else:
@@ -398,6 +503,8 @@ def handle_acceptance(message, chat_id):
             reply_parts.append(f"❌ 未找到 {len(fail_list)} 条：\n" + "\n".join([f"  • {f}" for f in fail_list]))
     if total_attachments > 0:
         reply_parts.append(f"📎 已为 {len(success_list)} 条需求各同步附件")
+    if has_links:
+        reply_parts.append(f"🔗 已同步 {len(doc_links)} 个文档链接")
     
     reply_message(message_id, "\n\n".join(reply_parts))
 
@@ -433,7 +540,7 @@ def webhook():
         
         message = event.get("message", {})
         message_id = message.get("message_id", "")
-        chat_id = message.get("chat_id", "")  # 🆕 获取群ID
+        chat_id = message.get("chat_id", "")  # 获取群ID
 
         # ========== 忽略旧消息 ==========
         create_time = message.get("create_time", "")
@@ -463,7 +570,7 @@ def webhook():
         if len(processed_messages) > 1000:
             processed_messages.clear()
         
-        # 🆕 处理验收消息（传入 chat_id）
+        # 处理验收消息（传入 chat_id）
         handle_acceptance(message, chat_id)
             
     except Exception as e:
