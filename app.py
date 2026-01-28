@@ -37,7 +37,7 @@ PROJECTS = [
         "name": "BusJam",
         "app_token": "OkR6bHCAfa3JrMst4fpcHd2SnHc",
         "table_id": "tblA0oTFNEI9O2wm",
-        "chat_ids": ["oc_d887d73c344ed7fc288ea487a73af247"]  # BusJam 项目群ID
+        "chat_ids": ["oc_d887d73c344ed7fc288ea487a73af247","oc_c837780ca61da27e17d98d55bca4c83f"]  # BusJam 项目群ID
     },
     {
         "name": "GoodsSort",
@@ -56,7 +56,7 @@ PROJECTS = [
     #     "name": "新项目名称",
     #     "app_token": "从URL的base/后面复制",
     #     "table_id": "从URL的table=后面复制",
-    #     "chat_ids": ["oc_群ID"]  # 可以配置多个群
+    #     "chat_ids": ["oc_xxx", "oc_yyy"]  # 可以配置多个群
     # },
 ]
 
