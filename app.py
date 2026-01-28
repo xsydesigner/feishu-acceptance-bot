@@ -106,7 +106,7 @@ def find_record_in_all_projects_v2(requirement_name):
     return matches
 
 def find_record(project, requirement_name):
-    """在指定项目中查找需求"""
+    """在指定项目中查找需求（排除已验收的）"""
     client = get_client()
     request_body = SearchAppTableRecordRequest.builder() \
         .app_token(project["app_token"]) \
@@ -114,11 +114,20 @@ def find_record(project, requirement_name):
         .request_body(SearchAppTableRecordRequestBody.builder()
             .filter(FilterInfo.builder()
                 .conjunction("and")
-                .conditions([Condition.builder()
-                    .field_name(FIELD_REQUIREMENT)
-                    .operator("is")
-                    .value([requirement_name])
-                    .build()])
+                .conditions([
+                    # 条件1：需求内容精确匹配
+                    Condition.builder()
+                        .field_name(FIELD_REQUIREMENT)
+                        .operator("is")
+                        .value([requirement_name])
+                        .build(),
+                    # 条件2：验收状态不是"验收通过"（排除已验收的）
+                    Condition.builder()
+                        .field_name(FIELD_STATUS)
+                        .operator("isNot")
+                        .value([STATUS_VALUE])
+                        .build()
+                ])
                 .build())
             .build()) \
         .build()
