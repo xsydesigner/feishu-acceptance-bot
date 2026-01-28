@@ -279,7 +279,7 @@ def reply_message(message_id, text):
     client.im.v1.message.reply(request_body)
 
 def handle_acceptance(message, chat_id):
-    """处理验收消息（支持多条需求）"""
+    """处理验收消息（支持多条需求，每条都上传附件）"""
     content = json.loads(message.get("content", "{}"))
     text = content.get("text", "")
     message_id = message.get("message_id")
@@ -295,22 +295,24 @@ def handle_acceptance(message, chat_id):
         return
     
     full_text = match.group(1).strip()
-    # 去除@机器人文本
     full_text = re.sub(r"@\S+\s*", "", full_text).strip()
     
-    # 🆕 解析多条需求（支持顿号、逗号、斜杠分隔）
-    # 先检查是否有项目名前缀（格式：项目名:需求1、需求2）
+    # 🆕 解析项目名和需求内容（先检查是否以项目名开头）
     specified_project_name = None
     requirements_text = full_text
     
-    if ":" in full_text or "：" in full_text:
-        # 使用冒号分隔项目名和需求
-        parts = re.split(r"[:：]", full_text, 1)
-        specified_project_name = parts[0].strip()
-        requirements_text = parts[1].strip() if len(parts) > 1 else ""
+    for project in PROJECTS:
+        for sep in ["/", ":", "："]:
+            prefix = project["name"] + sep
+            if full_text.startswith(prefix):
+                specified_project_name = project["name"]
+                requirements_text = full_text[len(prefix):].strip()
+                break
+        if specified_project_name:
+            break
     
-    # 分割多条需求（支持顿号、逗号、分号）
-    requirement_names = re.split(r"[、，,；;]", requirements_text)
+    # 分割多条需求（支持顿号、逗号）
+    requirement_names = re.split(r"[、，,]", requirements_text)
     requirement_names = [r.strip() for r in requirement_names if r.strip()]
     
     if not requirement_names:
@@ -320,67 +322,82 @@ def handle_acceptance(message, chat_id):
     print(f"指定项目: {specified_project_name or '未指定'}")
     print(f"需求列表: {requirement_names}")
     
-    # 处理附件（只处理一次，应用到所有需求）
-    attachments = []
-    if parent_id:
-        print(f"检测到引用消息，处理附件...")
-        parent_message = get_parent_message(parent_id)
-        # 需要先确定项目才能上传附件，这里先获取第一个需求的项目
-        temp_project = find_project_by_chat_id(chat_id) if not specified_project_name else find_project_by_name(specified_project_name)
-        if temp_project and parent_message:
-            attachments = extract_attachments(temp_project, parent_message)
+    # 根据群ID或指定项目名确定项目
+    base_project = None
+    if specified_project_name:
+        base_project = find_project_by_name(specified_project_name)
+        if not base_project:
+            project_names = ', '.join([p['name'] for p in PROJECTS])
+            reply_message(message_id, f"❌ 未找到项目「{specified_project_name}」\n可用项目: {project_names}")
+            return
+    else:
+        base_project = find_project_by_chat_id(chat_id)
     
-    # 🆕 批量处理每条需求
+    # 🆕 获取引用消息（如果有的话）
+    parent_message = None
+    if parent_id:
+        print(f"检测到引用消息，获取附件信息...")
+        parent_message = get_parent_message(parent_id)
+    
+    # 批量处理每条需求
     success_list = []
     fail_list = []
+    total_attachments = 0
     
-    for requirement_name in requirement_names:
-        print(f"\n处理需求: {requirement_name}")
+    for idx, requirement_name in enumerate(requirement_names):
+        print(f"\n处理需求 [{idx+1}/{len(requirement_names)}]: {requirement_name}")
         
-        # 确定项目
         project = None
         record = None
         
-        if specified_project_name:
-            project = find_project_by_name(specified_project_name)
-            if not project:
-                fail_list.append(f"{requirement_name}（项目不存在）")
-                continue
+        if base_project:
+            project = base_project
             record = find_record(project, requirement_name)
         else:
-            project = find_project_by_chat_id(chat_id)
-            if project:
-                record = find_record(project, requirement_name)
-            else:
-                matches = find_record_in_all_projects_v2(requirement_name)
-                if len(matches) == 1:
-                    project = matches[0]["project"]
-                    record = matches[0]["record"]
-                elif len(matches) > 1:
-                    fail_list.append(f"{requirement_name}（多个项目存在同名需求）")
-                    continue
+            matches = find_record_in_all_projects_v2(requirement_name)
+            if len(matches) == 1:
+                project = matches[0]["project"]
+                record = matches[0]["record"]
+            elif len(matches) > 1:
+                fail_list.append(f"{requirement_name}（多个项目存在同名需求）")
+                continue
         
         if not record:
             fail_list.append(requirement_name)
+            print(f"❌ 未找到需求")
             continue
         
-        # 更新记录（只有第一条需求带附件）
-        current_attachments = attachments if requirement_name == requirement_names[0] else None
-        if update_record(project, record.record_id, current_attachments):
+        print(f"✅ 在「{project['name']}」中找到需求")
+        
+        # 🆕 为每条需求单独上传附件
+        attachments = []
+        if parent_message:
+            print(f"  为该需求上传附件...")
+            attachments = extract_attachments(project, parent_message)
+            total_attachments += len(attachments)
+        
+        # 更新记录（每条需求都带附件）
+        if update_record(project, record.record_id, attachments):
             success_list.append(f"{project['name']}/{requirement_name}")
             print(f"✅ 更新成功")
         else:
-            fail_list.append(requirement_name)
+            fail_list.append(f"{requirement_name}（更新失败）")
             print(f"❌ 更新失败")
     
-    # 🆕 汇总回复
+    # 汇总回复
     reply_parts = []
     if success_list:
-        reply_parts.append(f"✅ 验收通过 {len(success_list)} 条：\n" + "\n".join([f"  • {s}" for s in success_list]))
+        if len(success_list) == 1:
+            reply_parts.append(f"✅ 需求「{success_list[0]}」验收通过")
+        else:
+            reply_parts.append(f"✅ 验收通过 {len(success_list)} 条：\n" + "\n".join([f"  • {s}" for s in success_list]))
     if fail_list:
-        reply_parts.append(f"❌ 未找到 {len(fail_list)} 条：\n" + "\n".join([f"  • {f}" for f in fail_list]))
-    if attachments:
-        reply_parts.append(f"📎 已同步 {len(attachments)} 个附件")
+        if len(fail_list) == 1:
+            reply_parts.append(f"❌ 未找到需求「{fail_list[0]}」")
+        else:
+            reply_parts.append(f"❌ 未找到 {len(fail_list)} 条：\n" + "\n".join([f"  • {f}" for f in fail_list]))
+    if total_attachments > 0:
+        reply_parts.append(f"📎 已为 {len(success_list)} 条需求各同步附件")
     
     reply_message(message_id, "\n\n".join(reply_parts))
 
