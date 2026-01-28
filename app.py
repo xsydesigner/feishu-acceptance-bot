@@ -6,6 +6,7 @@ from lark_oapi.api.drive.v1 import *
 import json
 import re
 import os
+import time
 processed_messages = set()
 
 app = Flask(__name__)
@@ -22,7 +23,9 @@ APP_SECRET = os.environ.get("APP_SECRET", "")
 FIELD_REQUIREMENT = "需求内容"
 FIELD_STATUS = "验收状态"
 FIELD_ATTACHMENT = "验收附件"
+FIELD_DEV_STATUS = "开发状态"  # 🆕 新增
 STATUS_VALUE = "验收通过"
+DEV_STATUS_VALUE = "已完成"  # 🆕 新增
 
 # 项目配置（新增项目在这里添加）
 # 🆕 添加 chat_ids 字段，关联项目群
@@ -37,7 +40,7 @@ PROJECTS = [
         "name": "BusJam",
         "app_token": "OkR6bHCAfa3JrMst4fpcHd2SnHc",
         "table_id": "tblA0oTFNEI9O2wm",
-        "chat_ids": ["oc_d887d73c344ed7fc288ea487a73af247","oc_c837780ca61da27e17d98d55bca4c83f"]  # BusJam 项目群ID
+        "chat_ids": ["oc_d887d73c344ed7fc288ea487a73af247"]  # BusJam 项目群ID
     },
     {
         "name": "GoodsSort",
@@ -138,9 +141,12 @@ def find_record(project, requirement_name):
     return None
 
 def update_record(project, record_id, attachments=None):
-    """更新验收状态和附件"""
+    """更新验收状态、开发状态和附件"""
     client = get_client()
-    fields = {FIELD_STATUS: STATUS_VALUE}
+    fields = {
+        FIELD_STATUS: STATUS_VALUE,
+        FIELD_DEV_STATUS: DEV_STATUS_VALUE  # 🆕 新增：开发状态改为已完成
+    }
     if attachments:
         fields[FIELD_ATTACHMENT] = attachments
     
@@ -273,7 +279,7 @@ def reply_message(message_id, text):
     client.im.v1.message.reply(request_body)
 
 def handle_acceptance(message, chat_id):
-    """🆕 处理验收消息（增加 chat_id 参数）"""
+    """处理验收消息（支持多条需求）"""
     content = json.loads(message.get("content", "{}"))
     text = content.get("text", "")
     message_id = message.get("message_id")
@@ -289,91 +295,94 @@ def handle_acceptance(message, chat_id):
         return
     
     full_text = match.group(1).strip()
-    # 去除可能的@机器人文本
+    # 去除@机器人文本
     full_text = re.sub(r"@\S+\s*", "", full_text).strip()
     
-    # 🆕 解析项目名和需求内容
+    # 🆕 解析多条需求（支持顿号、逗号、斜杠分隔）
+    # 先检查是否有项目名前缀（格式：项目名:需求1、需求2）
     specified_project_name = None
-    requirement_name = full_text
+    requirements_text = full_text
     
-    if "/" in full_text:
-        parts = full_text.split("/", 1)
+    if ":" in full_text or "：" in full_text:
+        # 使用冒号分隔项目名和需求
+        parts = re.split(r"[:：]", full_text, 1)
         specified_project_name = parts[0].strip()
-        requirement_name = parts[1].strip()
+        requirements_text = parts[1].strip() if len(parts) > 1 else ""
     
-    print(f"指定项目: {specified_project_name or '未指定'}")
-    print(f"需求内容: {requirement_name}")
+    # 分割多条需求（支持顿号、逗号、分号）
+    requirement_names = re.split(r"[、，,；;]", requirements_text)
+    requirement_names = [r.strip() for r in requirement_names if r.strip()]
     
-    # 🆕 确定项目的优先级：
-    # 1. 如果消息中指定了项目名，使用指定的项目
-    # 2. 否则根据群ID自动匹配项目
-    # 3. 如果群ID也没匹配到，搜索所有项目
-    
-    project = None
-    record = None
-    
-    if specified_project_name:
-        # 方式1：使用消息中指定的项目名
-        project = find_project_by_name(specified_project_name)
-        if not project:
-            project_names = ', '.join([p['name'] for p in PROJECTS])
-            reply_message(message_id, f"❌ 未找到项目「{specified_project_name}」\n可用项目: {project_names}")
-            return
-        record = find_record(project, requirement_name)
-        print(f"📌 使用指定项目: {project['name']}")
-        
-    else:
-        # 方式2：根据群ID自动匹配
-        project = find_project_by_chat_id(chat_id)
-        
-        if project:
-            # 找到了对应的项目群
-            record = find_record(project, requirement_name)
-            print(f"📌 根据群ID自动匹配到项目: {project['name']}")
-        else:
-            # 方式3：未配置群ID，搜索所有项目
-            print(f"⚠️ 群 {chat_id} 未关联项目，搜索所有项目...")
-            matches = find_record_in_all_projects_v2(requirement_name)
-            
-            if len(matches) == 0:
-                reply_message(message_id, f"❌ 未找到需求「{requirement_name}」")
-                return
-            elif len(matches) > 1:
-                # 找到多个匹配，提示用户
-                project_list = "\n".join([f"  • {m['project']['name']}" for m in matches])
-                reply_message(message_id, 
-                    f"⚠️ 找到 {len(matches)} 个同名需求：\n{project_list}\n\n"
-                    f"请使用格式：【验收通过】项目名/{requirement_name}\n"
-                    f"或联系管理员配置群ID关联")
-                return
-            else:
-                project = matches[0]["project"]
-                record = matches[0]["record"]
-                print(f"📌 全局搜索找到唯一匹配: {project['name']}")
-    
-    # 检查是否找到需求
-    if not record:
-        reply_message(message_id, f"❌ 在「{project['name']}」中未找到需求「{requirement_name}」")
-        print(f"❌ 未找到需求")
+    if not requirement_names:
+        reply_message(message_id, "❌ 未识别到需求内容")
         return
     
-    print(f"✅ 在「{project['name']}」中找到需求")
+    print(f"指定项目: {specified_project_name or '未指定'}")
+    print(f"需求列表: {requirement_names}")
     
-    # 处理附件
+    # 处理附件（只处理一次，应用到所有需求）
     attachments = []
     if parent_id:
         print(f"检测到引用消息，处理附件...")
         parent_message = get_parent_message(parent_id)
-        attachments = extract_attachments(project, parent_message)
+        # 需要先确定项目才能上传附件，这里先获取第一个需求的项目
+        temp_project = find_project_by_chat_id(chat_id) if not specified_project_name else find_project_by_name(specified_project_name)
+        if temp_project and parent_message:
+            attachments = extract_attachments(temp_project, parent_message)
     
-    # 更新记录
-    if update_record(project, record.record_id, attachments):
-        attachment_info = f"\n📎 已同步 {len(attachments)} 个附件" if attachments else ""
-        reply_message(message_id, f"✅ 「{project['name']}」需求「{requirement_name}」验收通过{attachment_info}")
-        print(f"✅ 更新成功")
-    else:
-        reply_message(message_id, f"❌ 更新失败，请重试")
-        print(f"❌ 更新失败")
+    # 🆕 批量处理每条需求
+    success_list = []
+    fail_list = []
+    
+    for requirement_name in requirement_names:
+        print(f"\n处理需求: {requirement_name}")
+        
+        # 确定项目
+        project = None
+        record = None
+        
+        if specified_project_name:
+            project = find_project_by_name(specified_project_name)
+            if not project:
+                fail_list.append(f"{requirement_name}（项目不存在）")
+                continue
+            record = find_record(project, requirement_name)
+        else:
+            project = find_project_by_chat_id(chat_id)
+            if project:
+                record = find_record(project, requirement_name)
+            else:
+                matches = find_record_in_all_projects_v2(requirement_name)
+                if len(matches) == 1:
+                    project = matches[0]["project"]
+                    record = matches[0]["record"]
+                elif len(matches) > 1:
+                    fail_list.append(f"{requirement_name}（多个项目存在同名需求）")
+                    continue
+        
+        if not record:
+            fail_list.append(requirement_name)
+            continue
+        
+        # 更新记录（只有第一条需求带附件）
+        current_attachments = attachments if requirement_name == requirement_names[0] else None
+        if update_record(project, record.record_id, current_attachments):
+            success_list.append(f"{project['name']}/{requirement_name}")
+            print(f"✅ 更新成功")
+        else:
+            fail_list.append(requirement_name)
+            print(f"❌ 更新失败")
+    
+    # 🆕 汇总回复
+    reply_parts = []
+    if success_list:
+        reply_parts.append(f"✅ 验收通过 {len(success_list)} 条：\n" + "\n".join([f"  • {s}" for s in success_list]))
+    if fail_list:
+        reply_parts.append(f"❌ 未找到 {len(fail_list)} 条：\n" + "\n".join([f"  • {f}" for f in fail_list]))
+    if attachments:
+        reply_parts.append(f"📎 已同步 {len(attachments)} 个附件")
+    
+    reply_message(message_id, "\n\n".join(reply_parts))
 
 # ============================================================
 # Webhook 路由
@@ -408,6 +417,15 @@ def webhook():
         message = event.get("message", {})
         message_id = message.get("message_id", "")
         chat_id = message.get("chat_id", "")  # 🆕 获取群ID
+
+        # ========== 忽略旧消息 ==========
+        create_time = message.get("create_time", "")
+        if create_time:
+            msg_time = int(create_time) / 1000
+            if time.time() - msg_time > 300:
+                print(f"忽略过旧的消息（超过5分钟）: {message_id}")
+                return {"code": 0}
+        # =============================================
         
         # 消息去重
         if message_id in processed_messages:
