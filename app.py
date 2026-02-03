@@ -379,13 +379,31 @@ def reply_message(message_id, text):
 
 def handle_acceptance(message, chat_id):
     """处理验收消息（支持多条需求，每条都上传附件和链接）"""
+    msg_type = message.get("msg_type", "")
     content = json.loads(message.get("content", "{}"))
-    text = content.get("text", "")
     message_id = message.get("message_id")
     parent_id = message.get("parent_id")
     
+    # 根据消息类型提取文本
+    text = ""
+    if msg_type == "text":
+        text = content.get("text", "")
+    elif msg_type == "post":
+        # 富文本消息，遍历提取文字
+        title = content.get("title", "")
+        post_content = content.get("content", [])
+        text_parts = [title] if title else []
+        for line in post_content:
+            for element in line:
+                if element.get("tag") == "text":
+                    text_parts.append(element.get("text", ""))
+        text = "".join(text_parts)
+    else:
+        text = content.get("text", "")
+    
     print(f"\n{'='*50}")
-    print(f"收到消息: {text}")
+    print(f"消息类型: {msg_type}")
+    print(f"提取文本: {text}")
     print(f"来自群聊: {chat_id}")
     
     # 匹配【验收通过】
