@@ -35,7 +35,7 @@ PROJECTS = [
         "name": "JigArt",
         "app_token": "Q8BWbvdpja9RzEsFXbjcXEy3nof",
         "table_id": "tbluv9XFW2P6B7sn",
-        "chat_ids": ["oc_2575222eccd3a75f35d409eaba35ba66"]  # JigArt 项目群ID
+        "chat_ids": ["oc_2575222eccd3a75f35d409eaba35ba66", "oc_6f0b936db6815b150627f70f7bb0ef17"]  # JigArt 项目群ID
     },
     {
         "name": "BusJam",
